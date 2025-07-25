@@ -1,0 +1,270 @@
+---
+title: "Statistical Tools for Analysis of Non-Probability samples: Part 2"
+author: "Jae Kwang kim and Yonghyun Kwon"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    keep_tex: true
+    citation_package: natbib
+    number_sections: true
+    # Alternatively, use 'biblatex' if preferred:
+    # citation_package: biblatex
+bibliography: reference.bib
+header-includes:
+  - \usepackage{sectsty}
+  - \usepackage{anyfontsize}
+  - \usepackage{bm}
+  - \usepackage{booktabs}
+  - \sectionfont{\LARGE}
+  - \subsectionfont{\Large}
+  - \renewcommand{\normalsize}{\large}
+---
+
+```{r setup, include=FALSE, warning = FALSE}
+library(xtable)
+options(xtable.comment = FALSE)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+SIMNUM = 2000
+set.seed(2025)
+```
+
+# Recap: Generalized entropy calibration(GEC)
+
+\begin{itemize}
+\item 
+We maximize the generalized entropy 
+\begin{equation}
+    Q_G( \textcolor{red}{\bm \omega}) = -\sum_{i \in S}  G(\textcolor{red}{\omega_i})
+    \label{gloss}
+    \end{equation} subject to
+     \begin{equation}
+\sum_{i \in S}  \textcolor{red}{\omega_i} \bm x_i =  \sum_{i=1}^N \bm x_i, 
+\label{calib}
+\end{equation}
+     where 
+      $G(\cdot): \mathcal V \to \mathbb R$ is a strictly convex and differentiable function.   
+\item    Using the Lagrange multiplier method, we find the minimizer of 
+    \begin{equation}
+    \mathcal{L} ( \textcolor{red}{\bm \omega}, \textcolor{red}{\bm \lambda}) =  \sum_{i \in S} G( \textcolor{red}{\omega_i}) - \textcolor{red}{\bm \lambda}^\top \left( \sum_{i \in S} \textcolor{red}{\omega_i}  \bm x_i - \sum_{i=1}^N \bm x_i \right) 
+    \label{lagrange}
+    \end{equation}
+    with respect to $\textcolor{red}{\bm \lambda}$ and $\textcolor{red}{\bm \omega}$.
+    \item By setting 
+    $\partial  \mathcal{L} / \partial \omega_i= 0$
+    and solving for $\omega_i$, we obtain 
+    $$ \hat{\omega}_i ( \textcolor{red}{\bm \lambda}) = g^{-1} \left(  \textcolor{red}{\bm \lambda}^{\top}  \bm x_i \right) , $$
+    where $g(\omega) = d G( \omega) / d \omega$. 
+     \item 
+Thus, by plugging $\hat{\omega}_i ( \textcolor{red}{\bm \lambda})$ into $\mathcal{L}$ in (\ref{lagrange}),  
+    we obtain 
+    \begin{eqnarray*}
+        \hat{\bm \lambda} = \mbox{arg} \min_{\lambda} \left[   \sum_{i \in S} G \left\{ \hat{\omega}_i ( \textcolor{red}{\bm \lambda} ) \right\}  - \textcolor{red}{\bm \lambda}^\top \left( \sum_{i \in S} \hat{\omega}_i ( \textcolor{red}{\bm \lambda} )   \bm x_i - \sum_{i=1}^N \bm x_i \right) \right] .   \end{eqnarray*}
+\end{itemize}
+
+\begin{table}[!ht]
+\centering
+\begin{tabular}{cccc}
+\hline
+Generalized Entropy                                             & $G(\omega)$                 & $\rho(\nu)$        \\ \hline
+Squared loss                                       & $\omega^2/2$                  & $\nu^2/2$              \\  
+Kullback-Leibler & $\omega \log (\omega)$ & $\exp ( \nu -1)$ \\ 
+Shifted KL & $(\omega-1) \{ \log (\omega-1)- 1\}$ & $
+\nu + \exp ( \nu )$  \\
+Empirical likelihood & $- \log ( \omega)$ & $-1-\log ( - \nu)$   \\
+Squared Hellinger & $( \sqrt{\omega} -1 )^2$ & $\nu/(\nu-1)$  \\
+R\'enyi entropy & $ \frac{1}{\alpha+1} \omega^{\alpha + 1}$   & $ \frac{\alpha}{\alpha+1} \nu^{\frac{\alpha+1}{\alpha}}$ \\
+$(\alpha \neq 0, -1)$ & & \\
+\hline
+\end{tabular}
+\caption{Examples of generalized entropies, $G(\omega)$, and the corresponding convex conjugate functions, $\rho(\nu)$} 
+\label{tab:15-1}
+\end{table}
+
+## Toy example
+
+```{r sim0, message=FALSE}
+# install.packages(GECal)
+library(GECal)
+# Sampled study variable
+y=c(5, 4, 7, 9, 11, 10, 13, 12, 15, 15)
+# Sampled auxiliary variables
+Xs=cbind(
+  c(1,1,1,1,1,1,1,1,1,1),
+  c(1,1,1,1,1,0,0,0,0,0),
+  c(1,3,5,7,9,6,7,8,9,10)
+) 
+# vector of population totals
+total=c(160,124,700)
+# base weights before calibration
+d = rep(1, 10)
+```
+
+The structure of data is as follows:
+
+```{r tab, echo=FALSE, include=FALSE, results="asis"}
+data <- cbind(1:length(d), d, Xs, y)
+colnames(data) <- c("$i$", "$\\delta_i$", "$x_{i0}$", "$x_{i1}$", "$x_{i2}$", "$y_i$")
+print(xtable(data,
+             digits = 0,
+             caption = "Simulation results for point estimation (Bias and RMSE)"),
+      include.rownames = FALSE,
+      sanitize.colnames.function = identity,
+      table.placement = "!htb")
+```
+```{r tab2, echo=FALSE, results="asis"}
+data <- cbind(1:length(d), d, Xs, y)
+colnames(data) <- c("$i$", "$\\delta_i$", "$x_{i0}$", "$x_{i1}$", "$x_{i2}$", "$y_i$")
+cat("\\begin{center}")
+cat("\\begin{tabular}{@{}rrrrrr@{}}\n")
+cat("\\toprule\n")
+cat("$i$ & $\\delta_i$ & $x_{i0}$ & $x_{i1}$ & $x_{i2}$ & $y_i$ \\\\ \\midrule\n")
+
+for (i in 1:10) {
+  cat(sprintf("%d & %d & %d & %d & %d & %d \\\\\n", 
+              i, d[i], Xs[i, 1], Xs[i, 2], Xs[i, 3], y[i]))
+}
+
+cat("11 & 0 & NA & NA & NA & NA \\\\\n")
+cat("$\\vdots$ & $\\vdots$ & NA & NA & NA & NA \\\\\n")
+cat(sprintf("%d & 0 & NA & NA & NA & NA \\\\\n", total[1]))
+cat("\\midrule\n")
+
+cat(sprintf("Total & %d & %d & %d & %d & $\\theta = ?$ \\\\\n",
+            length(y), total[1], total[2], total[3]))
+cat("\\bottomrule\n")
+cat("\\end{tabular}\n")
+cat("\\end{center}")
+```
+
+### Kullback-Leibler(Exponential tiliting)
+
+```{r cal1}
+# GEC estimator using ET(exponential tilting) divergence
+cal_ET <- GEcalib(~ 0 + Xs, dweight = d, const = total, 
+            method = "GEC0", entropy = "ET")
+head(cal_ET$w)
+
+GECal::estimate(y ~ 1, calibration = cal_ET)$estimate
+```
+
+### Empirical Likelihood
+
+```{r cal2}
+# GEC estimator using EL(empirical likelihood) divergence
+cal_EL <- GEcalib(~ 0 + Xs, dweight = d, const = total, 
+        method = "GEC0", entropy = "EL")
+head(cal_EL$w)
+
+GECal::estimate(y ~ 1, calibration = cal_EL)$estimate
+```
+
+### Shifted KL(Cross entropy)
+
+```{r cal3}
+# # GEC estimator using CE(cross entropy or shifted KL) divergence
+cal_CE <- GEcalib(~ 0 + Xs, dweight = d, const = total,
+        method = "GEC0", entropy = "CE", weight.scale = 2)
+# design weights should be greater than 1 in CE
+head(cal_CE$w)
+
+GECal::estimate(y ~ 1, calibration = cal_CE)$estimate
+```
+
+```{r tab3, echo=FALSE, results="asis"}
+cat("\\begin{table}[]\n")
+cat("    \\centering\n")
+cat("    \\begin{tabular}{ccccrrrr}\n")  # Now 7 columns: i, y, x1, x2, x3, ET, EL, CE
+cat("        \\hline\n")
+cat("        & \\multicolumn{4}{c}{} & \\multicolumn{3}{c}{\\textbf{weights}} \\\\\n")
+cat("        \\hline\n")
+cat("        $i$ & $y_i$ & $x_{i0}$ & $x_{i1}$ & $x_{i2}$ & \\textbf{ET} & \\textbf{EL} & \\textbf{CE} \\\\\n")
+cat("        \\hline\n")
+
+for (i in 1:10) {
+  cat(sprintf("        %d & %d & %d & %d & %d & %.2f & %.2f & %.2f \\\\\n",
+              i,
+              y[i],
+              Xs[i, 1], Xs[i, 2], Xs[i, 3],
+              cal_ET$w[i], cal_EL$w[i], cal_CE$w[i]))
+}
+
+cat("        \\hline\n")
+cat("    \\end{tabular}\n")
+cat("    \\caption{Comparison of ET, EL, and CE(shifted KL) weights.}\n")
+cat("\\end{table}\n")
+```
+
+# Real data example
+
+\begin{itemize}
+  \item The 2021 NHID from NHIS(National Health Insurance Service, Republic of Korea) was used, containing data for 1,000,000 adults in South Korea.
+  \item A pseudo-population of size $N = 100{,}000$ was created via random sampling.
+  \item Samples of size $n = 2{,}297$ were drawn using stratified sampling across 476 strata defined by Region (17), Age Group (14), and Sex (2).
+  \item Stratum-specific sample sizes are:
+    \begin{itemize}
+      \item $n_h = 5$ if $N_h > 15$, and $n_h = \left\lfloor N_h / 3 \right\rfloor$ if $N_h \leq 15$
+    \end{itemize}
+  \item We try to estimate the population sum of three study variables:
+    \begin{itemize}
+      \item Hemoglobin level(\texttt{Hemo}, in g/dL), Oral examination status(\texttt{OralExam}, 1 if an oral examination was conducted, 0 otherwise), and Alcohol consumption status(\texttt{Alcohol} 1 or 0).
+    \end{itemize}
+  \item See \cite{kwon2024generalized} for more details.
+\end{itemize}
+
+```{r eval=FALSE, include=FALSE}
+load("../data/nhis.Rdata")
+rownames(nhis) <- NULL
+N <- nrow(nhis)
+
+tab1 = table(nhis$AgeGroup, nhis$REGION1, nhis$SEX)
+tab1 = ifelse(tab1 > 15, 5, round(tab1 / 3))
+
+n = sum(tab1)
+
+index = c()
+pi_S = c()
+pi = rep(0, N)
+for(AgeGroup in unique(nhis$AgeGroup)){
+  for(REGION1 in unique(nhis$REGION1)){
+    for(SEX in unique(nhis$SEX)){
+      idx_tmp = which(nhis$AgeGroup == AgeGroup &
+                        nhis$REGION1 == REGION1 & 
+                        nhis$SEX == SEX)
+      n_h = tab1[AgeGroup,REGION1,SEX]
+      index = c(index, sample(idx_tmp, n_h, replace = FALSE))
+      pi_S = c(pi_S, rep(n_h / length(idx_tmp), n_h))
+      pi[idx_tmp] = n_h / length(idx_tmp)
+    }
+  }
+}
+
+delta = as.integer(1:N %in% index)
+nhis.samp <- nhis[index, ]
+
+nhis <- nhis[,c("AgeGroup", "SEX", "REGION1")]
+
+save(nhis, nhis.samp, file = "nhis.Rdata")
+```
+
+
+```{r}
+load("nhis.Rdata")
+
+head(nhis.samp[,c("AgeGroup", "SEX", "REGION1", "Hemo", "Alcohol", "OralExam")])
+fortmp <- formula(~ AgeGroup + SEX + REGION1)
+const = colMeans(model.matrix(fortmp, nhis))
+# const = colSums(model.matrix(fortmp, nhis)) # Used for population total
+
+calibration <- GEcalib(
+  fortmp,
+  dweight = rep(1, nrow(nhis.samp)),
+  data = nhis.samp,
+  const = const,
+  entropy = "ET",
+  method = "GEC0"
+)
+
+estimate(Hemo + Alcohol + OralExam ~ 1, data = nhis.samp, 
+         calibration = calibration)$estimate
+```
+

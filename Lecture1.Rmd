@@ -1,0 +1,557 @@
+---
+title: "Statistical Tools for Analysis of Non-Probability samples: Part 1"
+author: "Jae Kwang kim and Yonghyun Kwon"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    keep_tex: true
+    number_sections: true
+header-includes:
+  - \usepackage{sectsty}
+  - \usepackage{anyfontsize}
+  - \usepackage{bm}
+  - \usepackage{commath}
+  - \usepackage{xcolor}
+  - \sectionfont{\LARGE}
+  - \subsectionfont{\Large}
+  - \renewcommand{\normalsize}{\large}
+---
+
+```{r setup, include=FALSE, warning = FALSE}
+knitr::opts_chunk$set(warning = FALSE, echo = TRUE)
+SIMNUM = 2000
+set.seed(2025)
+```
+
+# Basic setup
+\begin{itemize}
+\item $U=\{1, \ldots, N \}$: index set of the finite population 
+\item $Y$: study variable of interest, observed in the sample.   
+\item $\mathbf{X}=(X_1, \ldots, X_p)^\top$: auxiliary variables,  observed throughout the finite population. 
+\item We are interested in estimating the finite population total 
+$$ \theta_N  =   \sum_{i=1}^N y_i ,
+$$
+where $y_i$ is the realized value of $Y$ for  unit $i$.   
+\item Let 
+$$ \delta_i = \left\{ \begin{array}{ll} 
+1 & \mbox{ if } y_i \mbox{ is sampled } \\
+0 & \mbox{ otherwise.}
+\end{array}
+\right. 
+$$
+
+  \item In this task, we analyze a (synthetic) non-probability samples (NPS), and the inclusion probability $\pi_i = P( \delta_i =1 \mid i)$ are unknown for $i = 1, \ldots, N$.
+\end{itemize}
+
+# Toy example : model-assisted calibration estimator
+
+## Simulation setup
+
+Suppose that the study variable $y_i$ is generated from the following outcome regression(OR) model:
+
+\[
+y_i = 1 + x_{i1} + 2 x_{i2} + e_i,
+\]
+
+and the sampling indicator $\delta_i$ is generated from the propensity score(PS) model:
+\[
+P( \delta_i =1 \mid i) = \pi_i = \dfrac{1}{1 + \exp(- (-0.5 - 0.25 x_{i2} + 0.5x_{i3}))}.
+\]
+
+where \(x_{i1}, x_{i2}, x_{i3} \sim N(2, 1)\) and \(e_i \sim N(0, 1)\) independently for \(i = 1, \cdots, N\). 
+<!-- This setup represents a Missing at Random (MAR) mechanism, where the probability of response depends on covariates but not directly on the outcome variable \(y_i\). The following R code generates the simulated data based on this setup: -->
+
+```{r sim0, message=FALSE}
+# install all the necessary libraries using install.packages(...)
+library(CVXR)
+library(ggplot2)
+library(GGally)
+
+N = 1000 # N is the population size
+p = 3; # p is the number of covariates
+x = matrix(rnorm(N * p, 2, 1), nc= p) # auxiliary variables
+mu = 1 + x[,1] + 2 * x[,2] # E(y | x)
+e = rnorm(N, 0, 1) # error
+y = mu + e # study variable of interest
+pi = 1 / (1 + exp(-(-0.5 - 0.25 * x[,2] + 0.5 * x[,3]))) # 1st order inclusion prob.
+# pi does not depend on y conditioning on x -> Missing at Random(MAR) 
+delta = rbinom(N, 1, pi) # Sample indicator variable
+x_OR = cbind(1, x[,c(1,2)]); x_RP = cbind(1, x[,c(2,3)])
+
+Index_S = (delta == 1)
+y_S = y[Index_S]
+x_OR_S = x_OR[Index_S,]; x_RP_S = x_RP[Index_S,]
+```
+
+The population size is $N =$ `r paste(N)`, and the expected sample size, $\mathbb E(n)$, is `r paste(N/2)`. We try to find the population total $\theta = \sum\limits_{i = 1}^N y_i\approx$ `r paste(round(sum(y), 2))` from the sample $S = \set{i : \delta_i = 1}$.
+
+## Step 1: Estimate PS model parameters
+
+\begin{itemize}
+\item The (working) PS model is a logistic regression model:
+$$ 
+\pi_i = \pi ( \bm x_{i, \rm PS}^\top \textcolor{red}{\bm \phi} ) = 
+\frac{ \exp \left(\bm x_{i, \rm PS}^\top \textcolor{red}{\bm \phi} \right)}{
+1+ \exp \left(\bm x_{i, \rm PS}^\top \textcolor{red}{\bm \phi} \right)}
+$$
+for $\bm x_{i, \rm PS}^\top = (x_{i2}, x_{i3})$ and some $\textcolor{red}{\bm \phi}$.
+\item Maximum likelihood estimation: Estimate $\textcolor{red}{\bm{\phi}}$ by maximizing the log-likelihood function
+$$
+\ell \left( \textcolor{red}{\bm \phi} \right) = \sum_{i=1}^N 
+\left[ \delta_i \pi ( \bm x_{i, \rm PS}^\top \textcolor{red}{\bm\phi} ) + \left( 1- \delta_i \right) \left\{ 1- \pi ( \bm x_{i, \rm PS}^\top \textcolor{red}{\bm \phi} )  \right\} \right] 
+$$
+\end{itemize}
+
+```{r step1}
+PSmodel = glm(delta ~ 0 + x_RP, family = binomial)
+PSmodel$coefficients # Estimated PS model parameters
+```
+
+\begin{itemize}
+    \item Let $\hat{\pi}_i = \pi \left( \bm x_{i, \rm PS}^\top \hat{\bm \phi} \right)$ be the estimated propensity score for unit $i = 1, \cdots, N$. 
+\end{itemize}
+
+```{r pihat}
+pihat = predict.glm(PSmodel, type = "response") # Estimated propensity score
+dhat = 1 / pihat; dhat_S = dhat[Index_S]; pihat_S = pihat[Index_S]
+```
+
+
+## Step 2: Weight calibration
+
+\begin{itemize}
+    \item Find the minimizer of 
+    \begin{equation}
+     Q_1 ( \textcolor{red}{\bm \omega} ) =  \sum_{i \in S} \left( \textcolor{red}{\omega_i}  - \hat{\pi}_i^{-1} \right)^2 ,  
+     \label{q1}
+     \end{equation}
+    subject to 
+    $$ \sum_{ i \in S} \textcolor{red}{\omega_i}  \bm x_{i, \rm OR} = \sum_{i=1}^N \bm x_{i, \rm OR}, $$
+    where $\bm x_{i, \rm OR}^\top = (x_{i1}, x_{i2})$.
+    \end{itemize}
+```{r step2}
+w = CVXR::Variable(length(y_S))
+
+# Option 1 ####
+# Minimize \sum (\omega_i - \hat d_i)^2 
+# s.t. \sum \delta_i \omega_i x_i = \sum x_i
+###############
+
+constraints <- list(t(x_OR_S) %*% w == colSums(x_OR))
+Phi_R <- CVXR::Minimize(sum((w - dhat_S)^2))
+
+prob <- CVXR::Problem(Phi_R, constraints)
+res <- CVXR::solve(prob)
+w_S = drop(res$getValue(w))
+```
+
+\begin{itemize}
+    \item Note that we can express
+\begin{align}
+ \hat{\theta}_{\rm cal} &= \sum_{i \in S} \hat{\omega}_i y_i  \\
+ &= \sum_{i=1}^N \bm x_{i, \rm OR}^\top \hat{\bm \beta} + \sum_{i \in S} \frac{1}{ \hat{\pi}_i} \left( y_i - \bm x_{i, \rm OR}^\top \hat{\bm \beta} \right) , 
+\label{est1}
+\end{align}
+where 
+     $$ \hat{\bm \beta} = \left( \sum_{i \in S}  \bm x_{i, \rm OR} \bm x_{i, \rm OR}^\top \right)^{-1} \sum_{i \in S}  \bm x_{i, \rm OR} y_i   .   
+    $$   
+\end{itemize}
+
+```{r calibrate}
+sum(w_S * y_S) # Estimated population total of y
+
+betahat = solve(t(x_OR_S) %*% (x_OR_S), t(x_OR_S) %*% (y_S))
+sum(x_OR %*% betahat) + sum(dhat_S * (y_S - drop(x_OR_S %*% betahat)))
+```
+
+```{r plot, out.width='50%', fig.align='center', fig.cap = "A scatter plot matrix of \\(\\pi_i^{-1}\\), \\(\\hat\\pi_i^{-1}\\), and \\(\\hat\\omega_i\\)"}
+GGally::ggpairs(data.frame(true.inv.prob = 1 / pi[Index_S], 
+    fitted.inv.prob = dhat_S, calib.weight = w_S))
+```
+
+### Exercise 1
+\begin{itemize}
+    \item Consider minimizing
+    $$ Q_2 \left( \textcolor{red}{\bm \omega} \right) = \sum_{i \in S} \hat{d}_i \left( \frac{ \textcolor{red}{\omega_i}}{\hat{d}_i} - 1 \right)^2
+    $$
+    subject to 
+    $$ \sum_{ i \in S} \textcolor{red}{\omega_i}  \bm x_{i, \rm OR} = \sum_{i=1}^N \bm x_{i, \rm OR},$$
+where $\hat d_i = \hat \pi_i^{-1}$. Modify the \texttt{constraints} and \texttt{Phi\_R} objects accordingly to obtain the calibration weights that solve this optimization problem.
+    \end{itemize}
+
+```{r opt2, echo=FALSE, eval=FALSE}
+# Option 2 ####
+# Minimize \sum \hat d_i (\omega_i / \hat d_i - 1)^2
+# s.t. \sum \delta_i \omega_i x_i = \sum x_i
+###############
+
+constraints <- list(t(x_OR_S) %*% w == colSums(x_OR))
+Phi_R <- CVXR::Minimize(sum(dhat_S * (w * pihat_S - 1)^2))
+```
+
+### Exercise 2
+\begin{itemize}
+    \item Consider minimizing
+$$ 
+Q(\textcolor{red}{\bm \omega} ) = \sum_{i \in S} \textcolor{red}{\omega_i}^2
+$$
+subject to 
+$$ 
+\sum_{i \in S} \textcolor{red}{\omega_i} \left( \bm x_{i, \rm OR}^\top , \hat{d}_i \right) = \sum_{i=1}^N \left( \bm x_{i, \rm OR}^\top, \hat{d}_i \right).
+$$
+Modify the \texttt{constraints} and \texttt{Phi\_R} objects accordingly to obtain the calibration weights that solve this optimization problem.
+    \end{itemize}
+
+```{r opt3, echo=FALSE, eval=FALSE}
+# Option 3 ####
+# Minimize \sum \omega_i^2
+# s.t. \sum \delta_i \omega_i (x_i, \hat d_i) = \sum (x_i, \hat d_i)
+###############
+
+x_OR = cbind(x_OR, dhat); x_OR_S = cbind(x_OR_S, dhat_S)
+constraints <- list(t(x_OR_S) %*% w == colSums(x_OR))
+Phi_R <- CVXR::Minimize(sum(w^2))
+```
+
+## Step 3: Variance estimation
+   \begin{itemize} 
+   \item For variance estimation, we can use 
+    $$ 
+    \hat{V} = \sum_{i \in S} \hat{\omega}_i \left( \hat{\omega}_i -1 \right) \left( y_i - \bm x_{i, \rm OR}^\top \hat{\bm \beta} \right)^2 .
+    $$
+    \end{itemize}
+
+```{r step3}
+sum(w_S * (w_S - 1) * (y_S - drop(x_OR_S %*% betahat))^2) # Estimated variance
+```
+
+# Monte-Carlo simulation
+We consider a $2 \times 2$ factorial experimental design to compare the estimators and check double-robustness. Suppose that $(\bm x_i^\top, e_i)$ are generated in the same way as above for $i = 1, \cdots, N$. The study variable $y_i$ is generated from one of the following two outcome regression (OR) models:
+  \begin{align*}
+\text{OR1: }& y_i = 1 + x_{i1} + 2 x_{i2} + e_i, \\
+\text{OR2: }& y_i = 1 + \sin(x_{i1}) + 0.5 x_{i2}^2 + e_i.
+\end{align*}
+When $y_i$ is generated from OR1, the working outcome regression model is correctly specified as the calibration constraint uses $\bm{x}{i, \mathrm{OR}} = (x{i1}, x_{i2})^\top$. If $y_i$ is generated from OR2, the working OR model is misspecified.
+
+Similarly, the sample inclusion indicator $\delta_i$ is generated from one of the following two propensity score (PS) models:
+  \begin{align*}
+\text{PS1: }& \pi_i = \dfrac{1}{1 + \exp(- (-0.5 - 0.25 x_{i2} + 0.5x_{i3}))}, \\
+\text{PS2: }& \pi_i = \dfrac{1}{1 + \exp(- (-1 + 0.1 x_{i2}x_{i3} + 0.3(x_{i3} - 1)^2))}.
+\end{align*}
+When $\delta_i$ is generated from PS1, fitting a logistic regression model using $\bm{x}{i, \mathrm{PS}} = (x{i2}, x_{i3})^\top$ corresponds to a correctly specified PS model. If $\delta_i$ is generated from PS2, the working PS model is misspecified.
+
+The Monte Carlo simulation size is \(B =\) `r paste(SIMNUM)`. We consider the following estimators:
+\begin{itemize}
+\item Inverse Probability Weighted(IPW) estimator:  \(N \left(\sum\limits_{i \in S} \hat \pi^{-1}(x_{i2}, x_{i3})y_i\right) / \left(\sum\limits_{i \in S} \hat \pi^{-1}(x_{i2}, x_{i3})\right)\).
+\item Model-assisted calibration(Cal) estimator:  \(\sum\limits_{i \in S} \hat \omega_i y_i\), where \(\hat \omega_i\) is the calibration weight.
+\begin{itemize}
+\item Cal1 minimizes \[Q_1(\bm \omega) = \sum\limits_{i \in S} (\omega_i - \hat d_i)^2\] subject to \(\sum\limits_{i \in S} \omega_i (1, x_{i1}, x_{i2}) = \sum\limits_{i= 1}^N (1, x_{i1}, x_{i2})\), where \(\hat d_i = \hat \pi^{-1}(x_{i2}, x_{i3})\).
+\item Cal2 minimizes \[Q_2(\bm \omega) = \sum\limits_{i \in S} \hat d_i (\omega_i / \hat d_i - 1)^2\] subject to \(\sum\limits_{i \in S} \omega_i (1, x_{i1}, x_{i2}) = \sum\limits_{i= 1}^N (1, x_{i1}, x_{i2})\).
+\item Cal3 minimizes \[Q_3(\bm \omega) = \sum\limits_{i \in S} \omega_i^2 \] subject to \(\sum\limits_{i \in S} \omega_i ((1, x_{i1}, x_{i2})^\top, \hat d_i) = \sum\limits_{i= 1}^N ((1, x_{i1}, x_{i2})^\top, \hat d_i)\).
+\end{itemize}
+\end{itemize}
+
+```{r MCsim, echo=FALSE, warning = FALSE}
+library(statmod)
+library(xtable)
+options(xtable.comment = FALSE)
+suppressMessages(library(tidyr))
+suppressMessages(library(dplyr))
+suppressMessages(library(foreach))
+suppressMessages(library(doParallel))
+suppressMessages(library(doRNG))
+
+# Simulation setup
+timenow1 = Sys.time()
+timenow0 = gsub(' ', '_', gsub('[-:]', '', timenow1))
+timenow = paste(timenow0, ".txt", sep = "")
+
+# setup parallel backend to use many processors
+cores = min(detectCores() - 3, 101)
+print(paste("# of cores in the MC simulation =", cores))
+# cl <- makeCluster(cores, outfile = timenow) #not to overload your computer
+cl <- makeCluster(cores)
+registerDoParallel(cl)
+registerDoRNG(seed = 11)
+
+modelcases = expand.grid(c(T,F),c(T,F))
+rnames <- apply(apply(modelcases, 2, ifelse, "C", "M"), 1, paste, collapse = "")
+
+gh <- gauss.quad(100, "hermite")
+nodes <- sqrt(2) * gh$nodes + 2
+weights <- gh$weights / sqrt(base::pi)
+
+grid <- setNames(expand.grid(nodes, nodes), c("x1", "x2"))
+w_grid <- expand.grid(weights, weights)
+
+final_res <- vector("list", 4)
+theta0_vec = NULL; Epi_vec = NULL
+
+for(cnt in 1:nrow(modelcases)){
+  RM = modelcases[cnt, 1]
+  OM = modelcases[cnt, 2]
+  
+  set.seed(11)
+  N = 1000 # N is the population size
+  p = 3; # p is the number of covariates
+  x = matrix(rnorm(N * p, 2, 1), nc= p) # auxiliary variables
+  x_OR = x[,c(1,2)]; x_PS = x[,c(2,3)]
+  if(OM) f1 <- function(x1, x2) 1 + x1 + 2 * x2
+  if(!OM) f1 <- function(x1, x2) 1 + sin(x1) + 0.5 * x2^2
+  mu = f1(x_OR[,1], x_OR[,2])
+  theta0 <- sum(do.call(f1, grid) * Reduce(`*`, w_grid)) * N
+  if(RM) theta0_vec <- c(theta0_vec, theta0)
+  e = rnorm(N, 0, 1) # error
+  y = mu + e # study variable of interest
+  theta = sum(y)
+  # if(RM) f2 <- function(x1, x2) 1 / (1 + exp(-(-1 - 0.5 * x1 + x2)))
+  # if(!RM) f2 <- function(x1, x2) 1 / (1 + exp(-(-1.25 + 0.3 * x1 * x2 + 0.05 * (x2 - 1)^2)))
+  
+  if(RM) f2 <- function(x1, x2) 1 / (1 + exp(-(-0.5 - 0.25 * x1 + 0.5 * x2)))
+  if(!RM) f2 <- function(x1, x2) 1 / (1 + exp(-(-1 + 0.1 * x1 * x2 + 0.3 * (x2 - 1)^2)))
+  # if(!RM) f2 <- function(x1, x2) 1 / (1 + exp(-(-1 + 0.25 * x1 * x2 + 0.05 * (x2 - 1)^2)))
+  # if(!RM) f2 <- function(x1, x2) 1 / (1 + exp(-(-0.5 + 0.1 * x1 * x2 + 0.05 * (x2 - 1)^2)))
+  # if(!RM) f2 <- function(x1, x2) {
+  #   tmp = 1 / (1 + exp(-(-1.25 + 0.3 * x1 * x2 + 0.05 * (x2 - 1)^2)))
+  #   ifelse(tmp < 0.9, tmp, 0.9)
+  # }
+  # if(!RM) f2 <- function(x1, x2) 1 / (1 + exp(-(-1 + ifelse(x1 < 1, -1, 1) + 0.1 * (x2 - 1)^2)))
+  
+  # if(RM) f2 <- function(x1, x2) 1 / (1 + exp(-(-2.75 - 0.5 * x1 + x2)))
+  # if(!RM) f2 <- function(x1, x2) 1 / (1 + exp(-(-3 + 0.3 * x1 * x2 + 0.05 * (x2 - 1)^2)))
+  pi = f2(x_PS[,1], x_PS[,2])
+  Epi <- sum(do.call(f2, grid) * Reduce(`*`, w_grid)) # E(\pi)
+  if(OM) Epi_vec <- c(Epi_vec, Epi)
+  # pi does not depend on y conditioning on x -> Missing at Random(MAR)
+  x_OR = cbind(1, x_OR)
+  x_PS = cbind(1, x_PS)
+  
+  
+  res_foreach <- foreach(
+    simnum = 1:SIMNUM,
+    .packages = c("nleqslv", "CVXR"),
+    .errorhandling="pass") %dopar% {
+      delta = rbinom(N, 1, pi) # Sample indicator variable
+      Index_S = (delta == 1)
+      y_S = y[Index_S]
+      x_OR_S = x_OR[Index_S,]; x_PS_S = x_PS[Index_S,]
+      
+      theta_res = NULL
+      var_res = NULL
+      CR_res = NULL
+      
+      PSmodel = glm(delta ~ x_PS, family = binomial)
+      PSmodel$coefficients # PS model parameters
+      pihat = predict.glm(PSmodel, type = "response") # Propensity score
+      dhat = 1 / pihat; dhat_S = dhat[Index_S]; pihat_S = pihat[Index_S]
+      
+      y_IPW = sum(y_S * dhat_S) / sum(dhat_S)
+      theta_res = c(theta_res, IPW = y_IPW * N)
+      # var_res = c(var_res, IPW = sum(dhat_S * (dhat_S - 1) * (y_S - y_IPW)^2))
+      
+      hhat = pihat * x_PS # MLE
+      kappa = solve(t(hhat[Index_S,]) %*% (hhat[Index_S,] *
+                                             (1 / pihat[Index_S] - 1) / pihat[Index_S]),
+                    t(hhat[Index_S,]) %*% ((y_S - y_IPW) *
+                                             (1 / pihat[Index_S] - 1) / pihat[Index_S]))
+      
+      eta = drop(hhat %*% kappa)
+      var_res = c(var_res, IPW = sum(dhat_S * (dhat_S - 1) *
+                                       (y_S - y_IPW - eta[Index_S])^2))
+      # eta[Index_S] = eta[Index_S] + (y_S - y_IPW - eta[Index_S]) / pihat[Index_S]
+      # var_res = c(var_res, IPW = var(eta) * N)
+      
+      for(cnt2 in 1:3){
+        w = CVXR::Variable(length(y_S))
+        
+        z = x_OR; z_S = x_OR_S
+        if(cnt2 == 1){
+          constraints <- list(t(z_S) %*% w == colSums(z))
+          Phi_R <- CVXR::Minimize(sum((w - dhat_S)^2))
+          
+          # betahat = solve(t(z_S) %*% (z_S), t(z_S) %*% (y_S))
+          # etahat = drop(z %*% betahat)
+          # etahat[Index_S] = etahat[Index_S] + dhat_S * (y_S - drop(z_S %*% betahat))
+          # sum(etahat)
+        }else if(cnt2 == 2){
+          constraints <- list(t(z_S) %*% w == colSums(z))
+          # Phi_R <- CVXR::Minimize(sum(dhat_S * (w * pihat_S - 1)^2))
+          Phi_R <- CVXR::Minimize(sum(((w - dhat_S)*dhat_S^{-1})^2))
+          
+          # betahat = solve(t(z_S) %*% (z_S * dhat_S), t(z_S) %*% (y_S * dhat_S))
+          # etahat = drop(z %*% betahat)
+          # etahat[Index_S] = etahat[Index_S] + dhat_S * (y_S - drop(z_S %*% betahat))
+          # sum(etahat)
+        }else if(cnt2 == 3){
+          z = cbind(z, dhat); z_S = cbind(z_S, dhat_S)
+          constraints <- list(t(z_S) %*% w == colSums(z))
+          Phi_R <- CVXR::Minimize(sum(w^2))
+          
+          # betahat = solve(t(z_S) %*% (z_S), t(z_S) %*% (y_S))
+          # etahat = drop(z %*% betahat)
+          # sum(etahat)
+        }
+        
+        # theta_res = c(theta_res, setNames(sum(etahat), paste("Cal", cnt2, sep = "")))
+        # var_res = c(var_res, setNames(NA, paste("Cal", cnt2, sep = "")))
+        
+        prob <- CVXR::Problem(Phi_R, constraints)
+        res <- CVXR::solve(prob)
+        w_S = drop(res$getValue(w))
+        
+        betahat = solve(t(z_S) %*% (z_S * w_S), t(z_S) %*% (y_S * w_S))
+        etahat = drop(z %*% betahat)
+        etahat[Index_S] = etahat[Index_S] + w_S * (y_S - drop(z_S %*% betahat))
+        
+        theta_res = c(theta_res, setNames(sum(y_S * w_S), paste("Cal", cnt2, sep = "")))
+        # var_res = c(var_res, Cal = var(etahat) * N)
+        var_res = c(var_res, setNames(sum(w_S * (w_S - 1) *
+                                            (y_S - drop(z_S %*% betahat))^2), paste("Cal", cnt2, sep = "")))
+      }
+      CR_res = ifelse(abs(theta_res - theta) < qnorm(0.975) * sqrt(var_res), 1, 0)
+      
+      list(theta_res - theta, var_res, CR_res)
+    }
+  final_res[[cnt]] <- res_foreach
+}
+stopCluster(cl)
+timenow2 = Sys.time()
+print(timenow2 - timenow1)
+paste("# of failure:", sum(!sapply(final_res, function(x) is.numeric(unlist(x)))));
+
+BIAS = sapply(final_res, function(x) rowMeans(do.call(cbind, lapply(x, `[[`, 1))))
+colnames(BIAS) = rnames
+
+SE = sapply(final_res, function(x) apply(do.call(cbind, lapply(x, `[[`, 1)), 1,
+                                         function(y) sqrt(var(y, na.rm = TRUE) * (length(y)-1) / (length(y)))))
+colnames(SE) = rnames
+
+RMSE = sapply(final_res, function(x) sqrt(rowMeans(do.call(cbind, lapply(x, `[[`, 1))^2)))
+colnames(RMSE) = rnames
+
+# round(cbind(BIAS, RMSE), 1)
+
+# gsub("\\\\addlinespace", "", kable(cbind(BIAS, RMSE), "latex", booktabs = TRUE, digits = 1) %>%
+#        kable_styling())
+
+res_var = sapply(final_res, function(x) rowMeans(do.call(cbind, lapply(x, `[[`, 2))))
+colnames(res_var) = rnames
+
+res_CR = sapply(final_res, function(x) rowMeans(do.call(cbind, lapply(x, `[[`, 3))))
+colnames(res_CR) = rnames
+# round(cbind((res_var - SE^2) / SE^2, res_CR), 3)
+
+# gsub("\\\\addlinespace", "", kable(cbind((res_var - SE^2) / SE^2, res_CR), "latex", booktabs = TRUE, digits = 2) %>%
+#        kable_styling())
+```
+
+If the PS model is correctly specified, \(E(n) = \) `r paste(round(Epi_vec[1] * N, 2))`. If the PS model is incorrectly specified, \(E(n) = \) `r paste(round(Epi_vec[2] * N, 2))`.
+
+```{r Point2, echo=FALSE, results="asis"}
+bias_tbl <- xtable(BIAS, digits = 2)
+rmse_tbl <- xtable(RMSE, digits = 2)
+
+# Output LaTeX directly
+cat("
+\\begin{table}[ht]
+\\centering
+\\begin{minipage}{0.48\\linewidth}
+\\centering
+")
+
+print(bias_tbl, floating = FALSE, comment = FALSE)
+
+cat("
+\\caption{Bias of point estimators}
+\\end{minipage}
+\\hfill
+\\begin{minipage}{0.48\\linewidth}
+\\centering
+")
+
+print(rmse_tbl, floating = FALSE, comment = FALSE)
+
+cat("
+\\caption{RMSE of point estimators}
+\\end{minipage}
+\\end{table}
+")
+```
+
+```{r Var2, echo=FALSE, results="asis"}
+rb_tbl <- xtable((res_var - SE^2) / SE^2, digits = 2)
+cr_tbl <- xtable(res_CR, digits = 2)
+
+# Output LaTeX directly
+cat("
+\\begin{table}[ht]
+\\centering
+\\begin{minipage}{0.48\\linewidth}
+\\centering
+")
+
+print(rb_tbl, floating = FALSE, comment = FALSE)
+
+cat("
+\\caption{Relative bias of variance estimators}
+\\end{minipage}
+\\hfill
+\\begin{minipage}{0.48\\linewidth}
+\\centering
+")
+
+print(cr_tbl, floating = FALSE, comment = FALSE)
+
+cat("
+\\caption{Coverage rate of 95\\% CI}
+\\end{minipage}
+\\end{table}
+")
+```
+
+```{r Point, eval=FALSE, include=FALSE, results="asis"}
+xtable::xtable(cbind(BIAS, RMSE), digits = 2,
+               caption = "Simulation results for point estimation(Bias and RMSE)", table.placement = "!htb")
+```
+
+```{r Var, echo=FALSE, include=FALSE, results="asis"}
+xtable::xtable(cbind((res_var - SE^2) / SE^2, res_CR), digits = 2,
+               caption = "Simulation results for variance estimation(Bias and coverage rage)", table.placement = "!htb")
+```
+
+```{r boxplots, echo=FALSE, fig.align='center', out.height='35%', out.width='100%', fig.cap='Performance of the point estimators under four scenarios'}
+res_all <- t(do.call(rbind, lapply(final_res, function(x) do.call(cbind, lapply(x, `[[`, 1)))))
+colnames(res_all) <- as.vector(outer(rownames(RMSE), rnames, paste, sep = "_"))
+
+# Convert to long format
+df_long <- as.data.frame(res_all) %>%
+  mutate(row = row_number()) %>%
+  pivot_longer(-row, names_to = "Method_Scenario", values_to = "Value") %>%
+  separate(Method_Scenario, into = c("Method", "Scenario"), sep = "_")
+
+# For grouped x-axis display
+df_long <- df_long %>%
+  mutate(Scenario = factor(Scenario, levels = rnames),
+         Method = factor(Method, levels = rownames(RMSE)))
+
+# Generate distinct colors
+colors <- rainbow(length(rownames(RMSE)))
+names(colors) <- rownames(RMSE)
+
+ggplot(df_long, aes(x = Scenario, y = Value, fill = Method)) +
+  geom_boxplot(position = position_dodge(width = 0.8), outlier.size = 0.5) +
+  scale_fill_manual(values = colors) +
+  theme_minimal() +
+  labs(
+    x = "Scenario",
+    y = NULL,  # leave y-axis label blank
+    fill = "Estimator"
+  ) +
+  ggtitle(expression(hat(theta) - theta[N])) +  # move to main title
+  # geom_vline(xintercept = c(1.5, 2.5, 3.5), linetype = "dashed", color = "black") +
+  geom_hline(yintercept = 0, linetype = "solid", color = "red") +
+  theme(
+    axis.text.x = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 12)
+  )
+```
