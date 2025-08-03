@@ -1,67 +1,10 @@
----
-title: "Statistical Tools for Analysis of Non-Probability samples: Part 1"
-author: "Jae Kwang kim and Yonghyun Kwon"
-date: "`r Sys.Date()`"
-output:
-  pdf_document:
-    keep_tex: true
-    number_sections: true
-header-includes:
-  - \usepackage{sectsty}
-  - \usepackage{anyfontsize}
-  - \usepackage{bm}
-  - \usepackage{commath}
-  - \usepackage{xcolor}
-  - \sectionfont{\LARGE}
-  - \subsectionfont{\Large}
-  - \renewcommand{\normalsize}{\large}
----
-
-```{r setup, include=FALSE, warning = FALSE}
+## ----setup, include=FALSE, warning = FALSE--------------------------------------
 knitr::opts_chunk$set(warning = FALSE, echo = TRUE)
-SIMNUM = 5 # Change to 2000 if necessary
+SIMNUM = 5
 set.seed(2025)
-```
 
-# Basic setup
-\begin{itemize}
-\item $U=\{1, \ldots, N \}$: index set of the finite population 
-\item $Y$: study variable of interest, observed in the sample.   
-\item $\mathbf{X}=(X_1, \ldots, X_p)^\top$: auxiliary variables,  observed throughout the finite population. 
-\item We are interested in estimating the finite population total 
-$$ \theta_N  =   \sum_{i=1}^N y_i ,
-$$
-where $y_i$ is the realized value of $Y$ for  unit $i$.   
-\item Let 
-$$ \delta_i = \left\{ \begin{array}{ll} 
-1 & \mbox{ if } y_i \mbox{ is sampled } \\
-0 & \mbox{ otherwise.}
-\end{array}
-\right. 
-$$
 
-  \item In this task, we analyze a (synthetic) non-probability samples (NPS), and the inclusion probability $\pi_i = P( \delta_i =1 \mid i)$ are unknown for $i = 1, \ldots, N$.
-\end{itemize}
-
-# Toy example : model-assisted calibration estimator
-
-## Simulation setup
-
-Suppose that the study variable $y_i$ is generated from the following outcome regression(OR) model:
-
-\[
-y_i = 1 + x_{i1} + 2 x_{i2} + e_i,
-\]
-
-and the sampling indicator $\delta_i$ is generated from the propensity score(PS) model:
-\[
-P( \delta_i =1 \mid i) = \pi_i = \dfrac{1}{1 + \exp(- (-0.5 - 0.25 x_{i2} + 0.5x_{i3}))}.
-\]
-
-where \(x_{i1}, x_{i2}, x_{i3} \sim N(2, 1)\) and \(e_i \sim N(0, 1)\) independently for \(i = 1, \cdots, N\). 
-<!-- This setup represents a Missing at Random (MAR) mechanism, where the probability of response depends on covariates but not directly on the outcome variable \(y_i\). The following R code generates the simulated data based on this setup: -->
-
-```{r sim0, message=FALSE}
+## ----sim0, message=FALSE--------------------------------------------------------
 # install all the necessary libraries using install.packages(...)
 library(CVXR)
 library(ggplot2)
@@ -81,55 +24,19 @@ x_OR = cbind(1, x[,c(1,2)]); x_RP = cbind(1, x[,c(2,3)])
 Index_S = (delta == 1)
 y_S = y[Index_S]
 x_OR_S = x_OR[Index_S,]; x_RP_S = x_RP[Index_S,]
-```
 
-The population size is $N =$ `r paste(N)`, and the expected sample size, $\mathbb E(n)$, is `r paste(N/2)`. We try to find the population total $\theta = \sum\limits_{i = 1}^N y_i\approx$ `r paste(round(sum(y), 2))` from the sample $S = \set{i : \delta_i = 1}$.
 
-## Step 1: Estimate PS model parameters
-
-\begin{itemize}
-\item The (working) PS model is a logistic regression model:
-$$ 
-\pi_i = \pi ( \bm x_{i, \rm PS}^\top \textcolor{red}{\bm \phi} ) = 
-\frac{ \exp \left(\bm x_{i, \rm PS}^\top \textcolor{red}{\bm \phi} \right)}{
-1+ \exp \left(\bm x_{i, \rm PS}^\top \textcolor{red}{\bm \phi} \right)}
-$$
-for $\bm x_{i, \rm PS}^\top = (x_{i2}, x_{i3})$ and some $\textcolor{red}{\bm \phi}$.
-\item Maximum likelihood estimation: Estimate $\textcolor{red}{\bm{\phi}}$ by maximizing the log-likelihood function
-$$
-\ell \left( \textcolor{red}{\bm \phi} \right) = \sum_{i=1}^N 
-\left[ \delta_i \pi ( \bm x_{i, \rm PS}^\top \textcolor{red}{\bm\phi} ) + \left( 1- \delta_i \right) \left\{ 1- \pi ( \bm x_{i, \rm PS}^\top \textcolor{red}{\bm \phi} )  \right\} \right] 
-$$
-\end{itemize}
-
-```{r step1}
+## ----step1----------------------------------------------------------------------
 PSmodel = glm(delta ~ 0 + x_RP, family = binomial)
 PSmodel$coefficients # Estimated PS model parameters
-```
 
-\begin{itemize}
-    \item Let $\hat{\pi}_i = \pi \left( \bm x_{i, \rm PS}^\top \hat{\bm \phi} \right)$ be the estimated propensity score for unit $i = 1, \cdots, N$. 
-\end{itemize}
 
-```{r pihat}
+## ----pihat----------------------------------------------------------------------
 pihat = predict.glm(PSmodel, type = "response") # Estimated propensity score
 dhat = 1 / pihat; dhat_S = dhat[Index_S]; pihat_S = pihat[Index_S]
-```
 
 
-## Step 2: Weight calibration
-
-\begin{itemize}
-    \item Find the minimizer of 
-    \begin{equation}
-     Q_1 ( \textcolor{red}{\bm \omega} ) =  \sum_{i \in S} \left( \textcolor{red}{\omega_i}  - \hat{\pi}_i^{-1} \right)^2 ,  
-     \label{q1}
-     \end{equation}
-    subject to 
-    $$ \sum_{ i \in S} \textcolor{red}{\omega_i}  \bm x_{i, \rm OR} = \sum_{i=1}^N \bm x_{i, \rm OR}, $$
-    where $\bm x_{i, \rm OR}^\top = (x_{i1}, x_{i2})$.
-    \end{itemize}
-```{r step2}
+## ----step2----------------------------------------------------------------------
 w = CVXR::Variable(length(y_S))
 
 # Option 1 ####
@@ -143,115 +50,46 @@ Phi_R <- CVXR::Minimize(sum((w - dhat_S)^2))
 prob <- CVXR::Problem(Phi_R, constraints)
 res <- CVXR::solve(prob)
 w_S = drop(res$getValue(w))
-```
 
-\begin{itemize}
-    \item Note that we can express
-\begin{align}
- \hat{\theta}_{\rm cal} &= \sum_{i \in S} \hat{\omega}_i y_i  \\
- &= \sum_{i=1}^N \bm x_{i, \rm OR}^\top \hat{\bm \beta} + \sum_{i \in S} \frac{1}{ \hat{\pi}_i} \left( y_i - \bm x_{i, \rm OR}^\top \hat{\bm \beta} \right) , 
-\label{est1}
-\end{align}
-where 
-     $$ \hat{\bm \beta} = \left( \sum_{i \in S}  \bm x_{i, \rm OR} \bm x_{i, \rm OR}^\top \right)^{-1} \sum_{i \in S}  \bm x_{i, \rm OR} y_i   .   
-    $$   
-\end{itemize}
 
-```{r calibrate}
+## ----calibrate------------------------------------------------------------------
 sum(w_S * y_S) # Estimated population total of y
 
 betahat = solve(t(x_OR_S) %*% (x_OR_S), t(x_OR_S) %*% (y_S))
 sum(x_OR %*% betahat) + sum(dhat_S * (y_S - drop(x_OR_S %*% betahat)))
-```
 
-```{r plot, out.width='50%', fig.align='center', fig.cap = "A scatter plot matrix of \\(\\pi_i^{-1}\\), \\(\\hat\\pi_i^{-1}\\), and \\(\\hat\\omega_i\\)"}
+
+## ----plot, out.width='50%', fig.align='center', fig.cap = "A scatter plot matrix of \\(\\pi_i^{-1}\\), \\(\\hat\\pi_i^{-1}\\), and \\(\\hat\\omega_i\\)"----
 GGally::ggpairs(data.frame(true.inv.prob = 1 / pi[Index_S], 
     fitted.inv.prob = dhat_S, calib.weight = w_S))
-```
 
-### Exercise 1
-\begin{itemize}
-    \item Consider minimizing
-    $$ Q_2 \left( \textcolor{red}{\bm \omega} \right) = \sum_{i \in S} \hat{d}_i \left( \frac{ \textcolor{red}{\omega_i}}{\hat{d}_i} - 1 \right)^2
-    $$
-    subject to 
-    $$ \sum_{ i \in S} \textcolor{red}{\omega_i}  \bm x_{i, \rm OR} = \sum_{i=1}^N \bm x_{i, \rm OR},$$
-where $\hat d_i = \hat \pi_i^{-1}$. Modify the \texttt{constraints} and \texttt{Phi\_R} objects accordingly to obtain the calibration weights that solve this optimization problem.
-    \end{itemize}
 
-```{r opt2, echo=FALSE, eval=FALSE}
-# Option 2 ####
-# Minimize \sum \hat d_i (\omega_i / \hat d_i - 1)^2
-# s.t. \sum \delta_i \omega_i x_i = \sum x_i
-###############
+## ----opt2, echo=FALSE, eval=FALSE-----------------------------------------------
+## # Option 2 ####
+## # Minimize \sum \hat d_i (\omega_i / \hat d_i - 1)^2
+## # s.t. \sum \delta_i \omega_i x_i = \sum x_i
+## ###############
+## 
+## constraints <- list(t(x_OR_S) %*% w == colSums(x_OR))
+## Phi_R <- CVXR::Minimize(sum(dhat_S * (w * pihat_S - 1)^2))
 
-constraints <- list(t(x_OR_S) %*% w == colSums(x_OR))
-Phi_R <- CVXR::Minimize(sum(dhat_S * (w * pihat_S - 1)^2))
-```
 
-### Exercise 2
-\begin{itemize}
-    \item Consider minimizing
-$$ 
-Q(\textcolor{red}{\bm \omega} ) = \sum_{i \in S} \textcolor{red}{\omega_i}^2
-$$
-subject to 
-$$ 
-\sum_{i \in S} \textcolor{red}{\omega_i} \left( \bm x_{i, \rm OR}^\top , \hat{d}_i \right) = \sum_{i=1}^N \left( \bm x_{i, \rm OR}^\top, \hat{d}_i \right).
-$$
-Modify the \texttt{constraints} and \texttt{Phi\_R} objects accordingly to obtain the calibration weights that solve this optimization problem.
-    \end{itemize}
+## ----opt3, echo=FALSE, eval=FALSE-----------------------------------------------
+## # Option 3 ####
+## # Minimize \sum \omega_i^2
+## # s.t. \sum \delta_i \omega_i (x_i, \hat d_i) = \sum (x_i, \hat d_i)
+## ###############
+## 
+## x_OR = cbind(x_OR, dhat); x_OR_S = cbind(x_OR_S, dhat_S)
+## constraints <- list(t(x_OR_S) %*% w == colSums(x_OR))
+## Phi_R <- CVXR::Minimize(sum(w^2))
 
-```{r opt3, echo=FALSE, eval=FALSE}
-# Option 3 ####
-# Minimize \sum \omega_i^2
-# s.t. \sum \delta_i \omega_i (x_i, \hat d_i) = \sum (x_i, \hat d_i)
-###############
 
-x_OR = cbind(x_OR, dhat); x_OR_S = cbind(x_OR_S, dhat_S)
-constraints <- list(t(x_OR_S) %*% w == colSums(x_OR))
-Phi_R <- CVXR::Minimize(sum(w^2))
-```
-
-## Step 3: Variance estimation
-   \begin{itemize} 
-   \item For variance estimation, we can use 
-    $$ 
-    \hat{V} = \sum_{i \in S} \hat{\omega}_i \left( \hat{\omega}_i -1 \right) \left( y_i - \bm x_{i, \rm OR}^\top \hat{\bm \beta} \right)^2 .
-    $$
-    \end{itemize}
-
-```{r step3}
+## ----step3----------------------------------------------------------------------
 sum(w_S * (w_S - 1) * (y_S - drop(x_OR_S %*% betahat))^2) # Estimated variance
-```
 
-# Monte-Carlo simulation
-We consider a $2 \times 2$ factorial experimental design to compare the estimators and check double-robustness. Suppose that $(\bm x_i^\top, e_i)$ are generated in the same way as above for $i = 1, \cdots, N$. The study variable $y_i$ is generated from one of the following two outcome regression (OR) models:
-  \begin{align*}
-\text{OR1: }& y_i = 1 + x_{i1} + 2 x_{i2} + e_i, \\
-\text{OR2: }& y_i = 1 + \sin(x_{i1}) + 0.5 x_{i2}^2 + e_i.
-\end{align*}
-When $y_i$ is generated from OR1, the working outcome regression model is correctly specified as the calibration constraint uses $\bm{x}{i, \mathrm{OR}} = (x{i1}, x_{i2})^\top$. If $y_i$ is generated from OR2, the working OR model is misspecified.
 
-Similarly, the sample inclusion indicator $\delta_i$ is generated from one of the following two propensity score (PS) models:
-  \begin{align*}
-\text{PS1: }& \pi_i = \dfrac{1}{1 + \exp(- (-0.5 - 0.25 x_{i2} + 0.5x_{i3}))}, \\
-\text{PS2: }& \pi_i = \dfrac{1}{1 + \exp(- (-1 + 0.1 x_{i2}x_{i3} + 0.3(x_{i3} - 1)^2))}.
-\end{align*}
-When $\delta_i$ is generated from PS1, fitting a logistic regression model using $\bm{x}{i, \mathrm{PS}} = (x{i2}, x_{i3})^\top$ corresponds to a correctly specified PS model. If $\delta_i$ is generated from PS2, the working PS model is misspecified.
-
-The Monte Carlo simulation size is \(B =\) `r paste(SIMNUM)`. We consider the following estimators:
-\begin{itemize}
-\item Inverse Probability Weighted(IPW) estimator:  \(N \left(\sum\limits_{i \in S} \hat \pi^{-1}(x_{i2}, x_{i3})y_i\right) / \left(\sum\limits_{i \in S} \hat \pi^{-1}(x_{i2}, x_{i3})\right)\).
-\item Model-assisted calibration(Cal) estimator:  \(\sum\limits_{i \in S} \hat \omega_i y_i\), where \(\hat \omega_i\) is the calibration weight.
-\begin{itemize}
-\item Cal1 minimizes \[Q_1(\bm \omega) = \sum\limits_{i \in S} (\omega_i - \hat d_i)^2\] subject to \(\sum\limits_{i \in S} \omega_i (1, x_{i1}, x_{i2}) = \sum\limits_{i= 1}^N (1, x_{i1}, x_{i2})\), where \(\hat d_i = \hat \pi^{-1}(x_{i2}, x_{i3})\).
-\item Cal2 minimizes \[Q_2(\bm \omega) = \sum\limits_{i \in S} \hat d_i (\omega_i / \hat d_i - 1)^2\] subject to \(\sum\limits_{i \in S} \omega_i (1, x_{i1}, x_{i2}) = \sum\limits_{i= 1}^N (1, x_{i1}, x_{i2})\).
-\item Cal3 minimizes \[Q_3(\bm \omega) = \sum\limits_{i \in S} \omega_i^2 \] subject to \(\sum\limits_{i \in S} \omega_i ((1, x_{i1}, x_{i2})^\top, \hat d_i) = \sum\limits_{i= 1}^N ((1, x_{i1}, x_{i2})^\top, \hat d_i)\).
-\end{itemize}
-\end{itemize}
-
-```{r MCsim, echo=FALSE, warning = FALSE}
+## ----MCsim, echo=FALSE, warning = FALSE-----------------------------------------
 library(statmod)
 library(xtable)
 options(xtable.comment = FALSE)
@@ -443,11 +281,9 @@ colnames(res_CR) = rnames
 
 # gsub("\\\\addlinespace", "", kable(cbind((res_var - SE^2) / SE^2, res_CR), "latex", booktabs = TRUE, digits = 2) %>%
 #        kable_styling())
-```
 
-If the PS model is correctly specified, \(E(n) = \) `r paste(round(Epi_vec[1] * N, 2))`. If the PS model is incorrectly specified, \(E(n) = \) `r paste(round(Epi_vec[2] * N, 2))`.
 
-```{r Point2, echo=FALSE, results="asis"}
+## ----Point2, echo=FALSE, results="asis"-----------------------------------------
 bias_tbl <- xtable(BIAS, digits = 2)
 rmse_tbl <- xtable(RMSE, digits = 2)
 
@@ -476,9 +312,9 @@ cat("
 \\end{minipage}
 \\end{table}
 ")
-```
 
-```{r Var2, echo=FALSE, results="asis"}
+
+## ----Var2, echo=FALSE, results="asis"-------------------------------------------
 rb_tbl <- xtable((res_var - SE^2) / SE^2, digits = 2)
 cr_tbl <- xtable(res_CR, digits = 2)
 
@@ -507,19 +343,19 @@ cat("
 \\end{minipage}
 \\end{table}
 ")
-```
 
-```{r Point, eval=FALSE, include=FALSE, results="asis"}
-xtable::xtable(cbind(BIAS, RMSE), digits = 2,
-               caption = "Simulation results for point estimation(Bias and RMSE)", table.placement = "!htb")
-```
 
-```{r Var, echo=FALSE, include=FALSE, results="asis"}
+## ----Point, eval=FALSE, include=FALSE, results="asis"---------------------------
+## xtable::xtable(cbind(BIAS, RMSE), digits = 2,
+##                caption = "Simulation results for point estimation(Bias and RMSE)", table.placement = "!htb")
+
+
+## ----Var, echo=FALSE, include=FALSE, results="asis"-----------------------------
 xtable::xtable(cbind((res_var - SE^2) / SE^2, res_CR), digits = 2,
                caption = "Simulation results for variance estimation(Bias and coverage rage)", table.placement = "!htb")
-```
 
-```{r boxplots, echo=FALSE, fig.align='center', out.height='35%', out.width='100%', fig.cap='Performance of the point estimators under four scenarios'}
+
+## ----boxplots, echo=FALSE, fig.align='center', out.height='35%', out.width='100%', fig.cap='Performance of the point estimators under four scenarios'----
 res_all <- t(do.call(rbind, lapply(final_res, function(x) do.call(cbind, lapply(x, `[[`, 1)))))
 colnames(res_all) <- as.vector(outer(rownames(RMSE), rnames, paste, sep = "_"))
 
@@ -554,4 +390,4 @@ ggplot(df_long, aes(x = Scenario, y = Value, fill = Method)) +
     axis.text.x = element_text(size = 10),
     plot.title = element_text(hjust = 0.5, size = 12)
   )
-```
+

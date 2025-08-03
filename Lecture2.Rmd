@@ -24,8 +24,6 @@ header-includes:
 library(xtable)
 options(xtable.comment = FALSE)
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
-SIMNUM = 2000
-set.seed(2025)
 ```
 
 # Recap: Generalized entropy calibration(GEC)
@@ -83,7 +81,8 @@ $(\alpha \neq 0, -1)$ & & \\
 ## Toy example
 
 ```{r sim0, message=FALSE}
-# install.packages(GECal)
+# install.packages("GECal", type = "source",
+#     repos = "https://cran.r-project.org")
 library(GECal)
 # Sampled study variable
 y=c(5, 4, 7, 9, 11, 10, 13, 12, 15, 15)
